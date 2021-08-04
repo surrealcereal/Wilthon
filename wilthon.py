@@ -65,8 +65,8 @@ class Windows:
 
 
 class GameInstallation:
-    # penis
     is_ubisoft = None
+    # penis
     is_steam = None
     savegame_dir = ""
     unhandled_install_location = ""

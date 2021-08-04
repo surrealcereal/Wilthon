@@ -5,5 +5,7 @@ Features include:
 - automatically deleting old unneccesary backups to save storage space
 - wide array of restoration options to older savegames on permadeath
 
+The script is re- and further customizable through the options.ini file in %appdata%\Wildlands Backup.
+
 # Contributors
 Thanks to an anonymous friend for their invaluable contributions to the source code.

@@ -1,5 +1,4 @@
 import configparser
-import ctypes
 import logging
 import os
 import psutil
@@ -7,12 +6,14 @@ import subprocess
 import time
 import winsound
 import sys
+import multiprocessing.popen_spawn_win32 as forking
 from ctypes import windll, create_unicode_buffer
 from distutils.dir_util import copy_tree as copy_dir
 from multiprocessing import Process
 from pynput import keyboard
 
 # TODO: consider adding advanced customasibility like changing remap keys, max amount of backups before deletion, add date to successfully removed oldest savegame
+# TODO: add check if setup was left uncompleted (sanity check)
 # TODO: test if remap and " work in game, ingame test
 # env names: TEMP, APPDATA, ProgramFiles(x86)
 SAVEGAME_SUPERDIR = r'Ubisoft\Ubisoft Game Launcher\savegames'
@@ -215,7 +216,7 @@ class Script:  # for meta stuff
 
     @staticmethod
     def updater():  # parse local version to be compared with remote version
-        pass  # TODO: add updater, https://fernandofreitasalves.com/how-to-create-python-exe-with-msi-installer-and-cx_freeze/
+        pass  # TODO: add updater
 
     @staticmethod
     def install():
@@ -265,7 +266,9 @@ class Script:  # for meta stuff
 
     @staticmethod
     def input_log(message):
-        ctypes.windll.user32.FlashWindow(ctypes.windll.kernel32.GetConsoleWindow(), True)
+        while getForegroundWindowTitle() != "wilthon.exe":
+            windll.user32.FlashWindow(windll.kernel32.GetConsoleWindow(), True)
+            time.sleep(0.5)
         return input(f"""{time.strftime("%Y-%m-%d %H:%M:%S")}{"".ljust(4)}[INPUT]{"".ljust(6)}{message} """)
 
 
@@ -560,8 +563,27 @@ class Options:  # for the ini
             config.write(configfile)
 
 
-if __name__ == "__main__":  # init
+# voodoo pyinstaller multiprocessing code
+class _Popen(forking.Popen):
+    def __init__(self, *args, **kw):
+        if hasattr(sys, 'frozen'):
+            os.putenv('_MEIPASS2', sys._MEIPASS)
+        try:
+            super(_Popen, self).__init__(*args, **kw)
+        finally:
+            if hasattr(sys, 'frozen'):
+                if hasattr(os, 'unsetenv'):
+                    os.unsetenv('_MEIPASS2')
+                else:
+                    os.putenv('_MEIPASS2', '')
 
+
+class Process(multiprocessing.Process):
+    _Popen = _Popen
+
+
+if __name__ == "__main__":  # init
+    multiprocessing.freeze_support()
     if os.path.isdir(BACKUP_DIR):
         Script.logger_initialize(is_install=False)
         Script.updater()
@@ -595,4 +617,3 @@ if __name__ == "__main__":  # init
     # block the main thread until these processes are finished
     for process in processes:
         process.join()
-

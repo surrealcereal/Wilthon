@@ -657,7 +657,6 @@ if __name__ == "__main__":  # init
 
     for process in processes:
         process.start()
-        print(process.name + "->" + str(process.pid))
 
     while True:
         if exit_event.value:

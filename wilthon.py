@@ -187,7 +187,7 @@ class GameInstallation:
 
 
 class Script:  # for meta stuff
-    version = "0.1.1"
+    version = "0.2"
 
     @staticmethod
     def logger_initialize(init_stream_handler=True, init_file_handler=True):

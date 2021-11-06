@@ -3,25 +3,24 @@ import inspect
 import logging
 import multiprocessing
 import os
+import pathlib
 import threading
 import psutil
 import time
 import winsound
 import sys
 import subprocess
+import datetime
 from ctypes import windll, create_unicode_buffer
 from shutil import copytree
 from pynput import keyboard
 
-# TODO MAYBE: ability to change max amount of backups before deletion
 # env names: TEMP, APPDATA, ProgramFiles(x86)
 BACKUP_DIR = os.path.expandvars(r"%APPDATA%\Wildlands Backup")
+NATIVES = ["Logs", "options.ini"]
 
 
 class Windows:
-    @staticmethod
-    def expand_path(foldervar, extra_path):
-        return os.path.expandvars(fr"%{foldervar}%\{extra_path}")
 
     @staticmethod
     def expand_backup_path(extra_path):
@@ -48,15 +47,12 @@ class Windows:
                 proc_list.append(x)
         for name, pid, service_type, sessionno, memusage in proc_list:
             if name == process_name:
-                pid_m = pid
-        pid_match = psutil.Process(pid=pid_m)
-        if pid_match.name() != "GRW.exe":
-            return None
-        return pid_match.exe()
+                return psutil.Process(pid=int(pid)).exe()
+        return None
 
     @staticmethod
-    def amended_getcttime(file):
-        return os.path.getmtime(os.path.expandvars(fr"%APPDATA%\Wildlands Backup\{file}"))
+    def listdir_fullpath(d):
+        return [os.path.join(d, f) for f in os.listdir(d)]
 
     @staticmethod
     def get_foreground_window_title():
@@ -66,8 +62,38 @@ class Windows:
         windll.user32.GetWindowTextW(hWnd, buf, length + 1)
         return buf.value if buf.value else None
 
+    @staticmethod
+    def get_timedelta_dir(dir):
+        def time_formatter(h, m, s):
+            l = locals().copy()
+            # penis
+            d = dict()
+            Words = {
+                "h": " hour",
+                "m": " minute",
+                "s": " second"
+            }
+            for k, v in l.items():
+                if v != 0:
+                    d[k] = str(v) + Words[k]
+                    if v != 1:
+                        d[k] += "s"
+            return " ".join(d.values())
 
-# penis
+        def infl(n):
+            return int(float(n))
+
+        h, m, s = str(
+            datetime.datetime.now() - datetime.datetime.fromtimestamp(os.path.getctime(dir))).split(":")
+        return time_formatter(infl(h), infl(m), infl(s))
+
+    @staticmethod
+    def contains_file_check(folder, file):
+        for f in os.listdir(pathlib.Path(folder).parent):
+            if f == file:
+                return True
+        return False
+
 
 class GameInstallation:
     is_ubisoft = None
@@ -153,10 +179,10 @@ class GameInstallation:
             meta_set_savegame_as(no_savegames_found_input)
 
     @staticmethod
-    def install_handler(*, called_recursively):  # maybe set returns as True/False?
+    def install_handler(*, called_recursively):
         if not called_recursively:
             GameInstallation.unhandled_install_location = Windows.find_executable_path("GRW.exe")
-        if GameInstallation.unhandled_install_location is None or GameInstallation.unhandled_install_location.lower() == "r":
+        if GameInstallation.unhandled_install_location is None:  # removed code for redundancy (?): or GameInstallation.unhandled_install_location.lower() == "r"
             logger.error(
                 "No running Ghost Recon: Wildlands iteration detected. An iteration of Ghost Recon: Wildlands needs to be running or the path to game executable must be given for setup to continue.")
             time.sleep(0.05)
@@ -176,7 +202,7 @@ class GameInstallation:
             GameInstallation.unhandled_install_location = install_location_input
             GameInstallation.install_handler(called_recursively=True)
             return
-        if not Options.executable_check(GameInstallation.unhandled_install_location):
+        if not Windows.contains_file_check(GameInstallation.unhandled_install_location, "GRW.exe"):
             logger.warning("Path does not contain Ghost Recon: Wildlands executable.")
             time.sleep(0.05)
             install_location_input = Script.input_log("R to retry, or input another custom path.")
@@ -187,7 +213,7 @@ class GameInstallation:
 
 
 class Script:  # for meta stuff
-    version = "0.2"
+    version = "0.2.1"
 
     @staticmethod
     def logger_initialize(init_stream_handler=True, init_file_handler=True):
@@ -207,18 +233,21 @@ class Script:  # for meta stuff
         if init_file_handler:
             file_h_formatter = logging.Formatter('%(asctime)-22s %(levelname)-12s %(message)s', '%Y-%m-%d %H:%M:%S')
             file_h = logging.FileHandler(
-                Windows.expand_backup_path(rf"""Logs\log{time.strftime("%Y-%m-%d %H.%M.%S")}.log"""))
+                Windows.expand_backup_path(rf'Logs\log{time.strftime("%Y-%m-%d %H.%M.%S")}.log'))
             file_h.setFormatter(file_h_formatter)
             logger.addHandler(file_h)
 
     @staticmethod
     def install():
+        os.mkdir(BACKUP_DIR)
+        os.mkdir(Windows.expand_backup_path("Logs"))
         Script.logger_initialize(init_stream_handler=False, init_file_handler=True)
         logger.info("Successfully created directory \"Wildlands Backup\".")
         logger.info("Successfully created directory \"Wildlands Backup\\Logs\".")
         GameInstallation.install_handler(called_recursively=False)
-        for subdir in [x[0] for x in os.walk(Windows.expand_path("ProgramFiles(x86)",
-                                                                 r'Ubisoft\Ubisoft Game Launcher\savegames'))]:  # for every subdir in SAVEGAME_SUPERDIR
+        _, s, _ = os.walk(
+            os.path.join(os.path.expandvars("ProgramFiles(x86)"), r'Ubisoft\Ubisoft Game Launcher\savegames'))
+        for subdir in s:
             if subdir.endswith("1771"):  # ubi install
                 GameInstallation.is_ubisoft = True
                 GameInstallation.steam_candidate_adress = subdir
@@ -235,8 +264,10 @@ class Script:  # for meta stuff
         Options.savegame_dir = GameInstallation.savegame_dir
         Options.interval_question()
         Options.index_question()
+        Options.max_folder_count_question()
         Options.launch_on_launch_question()
         Options.write_to_ini()
+        Options.install_type_init()
 
     @staticmethod
     def input_log(message):
@@ -252,19 +283,18 @@ class Script:  # for meta stuff
                     break
 
         t = threading.Thread(target=flash_window)
-        # t.setDaemon(True)
         t.start()
-        return input(f"""{time.strftime("%Y-%m-%d %H:%M:%S")}{"".ljust(4)}[INPUT]{"".ljust(6)}{message} """)
+        return input(f'{time.strftime("%Y-%m-%d %H:%M:%S")}{"".ljust(4)}[INPUT]{"".ljust(6)}{message} ')
 
     @staticmethod
-    def input_guard(message, expected_tuple=("y", "n", "yes", "no"), wrong_notif="Please enter a correct input:"):
+    def input_guard(message, expected_tuple=("y", "n"), wrong_notif="Please enter a valid input:"):
         expected_display = list()
         for e in expected_tuple:
             expected_display.append(e)
             expected_display.append("/")
         expected_display.pop()
         expected_display = "".join(expected_display)
-        wrong_notif += f' ({expected_display}'
+        wrong_notif += f' ({expected_display})'
         guarded_input = Script.input_log(f"{message} ({expected_display})")
         while guarded_input.lower() not in expected_tuple:
             logger.warning(wrong_notif)
@@ -279,21 +309,31 @@ class Script:  # for meta stuff
         else:
             logger.info("Relaunching Wildlands...")
         if install_type == "Steam":
-            subprocess.call(r"Steam.exe -applaunch 460930", cwd=steam_install_location, shell=True)
+            subprocess.call(r"steam.exe -applaunch 460930", cwd=steam_install_location, shell=True)
         elif install_type == "Ubisoft":
             os.startfile(Options.install_location)
         while not Windows.check_process("GRW.exe"):
             time.sleep(1)
         logger.info("Pausing functionality for a grace period of 60 seconds.")
+        pause_exit_checks.value = True
         time.sleep(60)
         pause_exit_checks.value = False
+
+    @staticmethod
+    def backup_dir_without_natives():
+        folder_list = Windows.listdir_fullpath(BACKUP_DIR)
+        for e in NATIVES:
+            for i in folder_list:
+                if e in i:
+                    folder_list.remove(i)
+        return folder_list
 
 
 class Routine:
 
     @staticmethod
     def back_savegames_up(options_savegame_dir, options_backup_interval, suspend_event,
-                          pause_exit_checks):  # pass data from __main__ as args
+                          pause_exit_checks):
         Script.logger_initialize()
         while True:
             while suspend_event.value:
@@ -303,27 +343,12 @@ class Routine:
             new_backup_dirname = time.strftime("%Y-%m-%d %H.%M.%S")  # ISO 8601
             os.mkdir(Windows.expand_backup_path(f"{new_backup_dirname}"))
             copytree(options_savegame_dir, Windows.expand_backup_path(f"{new_backup_dirname}"),
-                     dirs_exist_ok=True)  # destination
+                     dirs_exist_ok=True)
             logger.info("Successfully backed savegames up.")
             time.sleep(float(options_backup_interval))
 
     @staticmethod
-    def delete_unneccesary_backups(suspend_event, pause_exit_checks):
-        def convert_seconds(seconds):
-            m, s = divmod(int(seconds), 60)
-            h, m = divmod(m, 60)
-
-            def zero_checker(var, time_type):
-                if var == 0:
-                    return "", ""
-                else:
-                    return f"""{int(var)} {time_type + "s" if var != 1 else time_type}""", " "
-
-            h_string = zero_checker(h, "hour")
-            m_string = zero_checker(m, "minute")
-            s_string = zero_checker(s, "second")
-            return f"""{h_string[0]}{h_string[1]}{m_string[0]}{m_string[1]}{s_string[0]}""".rstrip(" ")
-
+    def delete_unneccesary_backups(options_max_folder_count, suspend_event, pause_exit_checks):
         Script.logger_initialize()
         while True:
             while suspend_event.value:
@@ -331,44 +356,35 @@ class Routine:
             while pause_exit_checks.value:
                 time.sleep(0.2)
 
-            folder_count = 0
-            for _, dirnames, filenames in os.walk(BACKUP_DIR):  # count folders
-                folder_count += len(dirnames)
-            if folder_count > 11:  # Include logs folder
-                folder_list = os.listdir(BACKUP_DIR)
-                for e in ["Logs", "options.ini"]:
-                    folder_list.remove(e)
-                oldest_folder = min(folder_list, key=Windows.amended_getcttime)
-                oldest_folder_subs = os.listdir(Windows.expand_backup_path(oldest_folder))
-                # oldest_folder_time = os.path.getmtime(Windows.expand_backup_path(oldest_folder))
+            folder_list = Script.backup_dir_without_natives()
+            if len(folder_list) > int(options_max_folder_count):
+                oldest_folder = min(folder_list, key=os.path.getctime)
+                oldest_folder_subs = Windows.listdir_fullpath(oldest_folder)
+                time_to_display = Windows.get_timedelta_dir(oldest_folder)
                 for file in oldest_folder_subs:
-                    os.remove(Windows.expand_backup_path(fr"{oldest_folder}\{file}"))
-                os.rmdir(Windows.expand_backup_path(oldest_folder))
-                logger.info(
-                    f"""Successfully removed oldest savegame.""")  # , which was backed up {convert_seconds(time.time() - oldest_folder_time)} ago.
+                    os.remove(os.path.join(oldest_folder, file))
+                os.rmdir(oldest_folder)
+                logger.info(f"Successfully removed oldest savegame, which was backed up {time_to_display} ago.")
 
     @staticmethod
     def handle_game_exits(options_index_to_restore, options_savegame_dir, options_steam_install_location,
-                          options_install_type, first_passthrough, suspend_event,
+                          options_install_type, suspend_event,
                           exit_event, pause_exit_checks):
         Script.logger_initialize()
 
         def manual_restore(options_backup_interval, options_savegame_dir):
-            Script.logger_initialize()
-            while True:
-                try:
-                    manual_restore_input = int(Script.input_log(
-                        "Which folder should be restored? Enter a cardinal number, e.g. 3 for third newest."))
-                except ValueError:
-                    logger.warning("Please enter a corrent number.")
-                    time.sleep(0.05)
-                else:
-                    break
+            manual_restore_input = Script.input_log(
+                "Which folder should be restored? Enter a cardinal number, e.g. 3 for third newest.")
+            while not manual_restore_input.isnumeric():
+                logger.warning("Please enter a valid number.")
+                time.sleep(0.05)
+                manual_restore_input = Script.input_log(
+                    "Which folder should be restored? Enter a cardinal number, e.g. 3 for third newest.")
             manual_restore_confirmation_input = Script.input_guard(
                 f"This equates to a roll back of {manual_restore_input * int(options_backup_interval) * 60} minutes, are you sure?")
             if manual_restore_confirmation_input.lower() == "y":
-                newest_file_list = sorted(os.listdir(BACKUP_DIR), key=Windows.amended_getcttime)
-                copytree(Windows.expand_backup_path(f"{newest_file_list[-1 * manual_restore_input]}"),
+                newest_file_list = sorted(Windows.listdir_fullpath(BACKUP_DIR), key=os.path.getctime)
+                copytree(Windows.expand_backup_path(f"{newest_file_list[-1 * int(manual_restore_input)]}"),
                          options_savegame_dir, dirs_exist_ok=True)
                 logger.info("Successfully restored savegames.")
                 return
@@ -377,7 +393,7 @@ class Routine:
                 return
 
         def restore_savegames(options_index_to_restore, options_savegame_dir):
-            newest_file_list = sorted(os.listdir(BACKUP_DIR), key=Windows.amended_getcttime)
+            newest_file_list = sorted(Windows.listdir_fullpath(BACKUP_DIR), key=os.path.getctime)
             copytree(Windows.expand_backup_path(f"{newest_file_list[-1 * int(options_index_to_restore)]}"),
                      options_savegame_dir, dirs_exist_ok=True)
             logger.info("Successfully restored savegames.")
@@ -391,22 +407,10 @@ class Routine:
         sys.stdin = open(
             0)  # omg why is this not the first thing that pops up when searching for EOFError, i spent like 5h on this crap
         while True:
-            # while suspend_event.value: # do not suspend handle_game_exits as its supposed to be the handler of this
-            #     time.sleep(0.2)
+            # do not suspend handle_game_exits as its supposed to be the handler of this
 
             if Windows.check_process("GRW.exe"):
-                if first_passthrough:
-                    first_passthrough = False
                 time.sleep(1)
-            elif first_passthrough:
-                logger.info("Waiting for Ghost Recon: Wildlands to be running...")
-                pause_exit_checks.value = True
-                first_passthrough = False
-                while not Windows.check_process("GRW.exe"):
-                    time.sleep(0.5)
-                logger.info("Wildlands iteration detected, pausing functionality for a grace period of 60 seconds.")
-                time.sleep(60)
-                pause_exit_checks.value = False
             else:
                 suspend_event.value = True
                 logger.warning("No running iteration of Ghost Recon: Wildlands detected. Initating backup options...")
@@ -436,28 +440,14 @@ class Routine:
         Script.logger_initialize()
 
         def on_press(key):
-            # while suspend_event.value:
-            #     time.sleep(0.2)
-
-            key_str = str(key).replace("'", "")
-            if key_str == "\"" and Windows.get_foreground_window_title() == "Ghost Recon® Wildlands":
-                winsound.Beep(750, 250)
-                newest_file_epoch_time = os.path.getctime(
-                    Windows.expand_backup_path(max(os.listdir(BACKUP_DIR), key=Windows.amended_getcttime)))
-                time_difference = int(((time.time() - newest_file_epoch_time) / 60))
-                if time_difference >= 1:
-                    time_to_display = time_difference
-                    if time_difference == 1:
-                        time_unit = "minute"
-                    else:
-                        time_unit = "minutes"
-                else:
-                    time_to_display = int(time.time() - newest_file_epoch_time)
-                    if time_to_display == 1:
-                        time_unit = "second"
-                    else:
-                        time_unit = "seconds"
-                logger.info(f"""Wilthon is still running. Last backup was {time_to_display} {time_unit} ago.""")
+            try:
+                if key.char == '"' and Windows.get_foreground_window_title() == "Ghost Recon® Wildlands":
+                    winsound.Beep(750, 250)
+                    newest_folder = max(Script.backup_dir_without_natives(), key=os.path.getctime)
+                    time_to_display = Windows.get_timedelta_dir(newest_folder)
+                    logger.info(f"Wilthon is still running. Last backup was {time_to_display} ago.")
+            except AttributeError:
+                pass
 
         def win32_event_filter(msg, data):
             if data.vkCode == 0xC0 and Windows.get_foreground_window_title() == "Ghost Recon® Wildlands":  # " key
@@ -472,47 +462,28 @@ class Routine:
 
 class Options:  # for the ini
     install_location = None
-    # is_tab2m_remap_on = None
     index_to_restore = None
     backup_interval = None
     savegame_dir = None
     launch_on_launch = None
+    max_folder_count = None
     steam_install_location = None
 
     @staticmethod
-    def executable_check(folder):
-        for file in os.listdir(folder.rstrip(r"\GRW.exe")):
-            if file == "GRW.exe":
-                return True
-        return False
-
-    @staticmethod
-    def remap_question():
-        tab_input = Script.input_guard("Do you want to remap M to Tab to change the map key in-game?")
-        if tab_input == "y":
-            Options.is_tab2m_remap_on = True
-            return
+    def index_question():
+        index_answer = Script.input_log(
+            "Which folder should be restored on auto-restore? Enter a cardinal number, e.g. 3 for third newest.")
+        while not index_answer.isnumeric():
+            logger.warning("Please enter a correct number.")
+            time.sleep(0.05)
+            index_answer = Script.input_log(
+                "Which folder should be restored on auto-restore? Enter a cardinal number, e.g. 3 for third newest.")
+        minutes_conf_message = int(int(index_answer) * Options.backup_interval / 60)
+        seconds_conf_message = int(int(index_answer) * Options.backup_interval)
+        if int(int(index_answer) * Options.backup_interval / 60) > 0:
+            confirmation_message = f'This equates to the script autorestoring a savegame from {minutes_conf_message} {"minutes" if minutes_conf_message != 1 else "minute"} ago, are you sure?'
         else:
-            Options.is_tab2m_remap_on = False
-            return
-
-    @staticmethod
-    def index_question():  # TODO fix mentions of called recursively here
-        while True:
-            try:
-                index_answer = int(Script.input_log(
-                    "Which folder should be restored on auto-restore? Enter a cardinal number, e.g. 3 for third newest."))
-            except ValueError:
-                logger.warning("Please enter a corrent number.")
-                time.sleep(0.05)
-            else:
-                break
-        minutes_conf_message = int(index_answer * Options.backup_interval / 60)
-        seconds_conf_message = int(index_answer * Options.backup_interval)
-        if int(index_answer * Options.backup_interval / 60) > 0:
-            confirmation_message = f"""This equates to the script autorestoring a savegame from {minutes_conf_message} {"minutes" if minutes_conf_message != 1 else "minute"} ago, are you sure?"""
-        else:
-            confirmation_message = f"""This equates to the script autorestoring a savegame from {seconds_conf_message} {"seconds" if seconds_conf_message != 1 else "second"} ago, are you sure?"""
+            confirmation_message = f'This equates to the script autorestoring a savegame from {seconds_conf_message} {"seconds" if seconds_conf_message != 1 else "second"} ago, are you sure?'
         index_confirmation_input = Script.input_guard(confirmation_message)
         if index_confirmation_input == "y":
             Options.index_to_restore = index_answer
@@ -547,18 +518,29 @@ class Options:  # for the ini
             return
 
     @staticmethod
+    def max_folder_count_question():
+        max_folder_answer = Script.input_log(
+            "How many folders should be kept before deleting extras?")
+        while not max_folder_answer.isnumeric():
+            logger.warning("Please enter a correct number.")
+            time.sleep(0.05)
+            max_folder_answer = Script.input_log(
+                "How many folders should be kept before deleting extras?")
+        Options.max_folder_count = max_folder_answer
+
+    @staticmethod
     def steam_question(recursive_input=None):
-        if recursive_input is not None:
-            unhandled_install_location = Windows.find_executable_path("Steam.exe")
-        else:
+        if recursive_input:
             unhandled_install_location = recursive_input
+        else:
+            unhandled_install_location = Windows.find_executable_path("steam.exe")
         if unhandled_install_location is None:  # or unhandled_install_location.lower() == "r"
             logger.error(
                 "No running Steam iteration detected. An iteration of Steam needs to be running or the path to Steam executable must be given for setup to continue.")
             time.sleep(0.05)
             install_location_input = Script.input_log("R to retry, or input path to game executable.")
             if install_location_input.lower() == "r":
-                unhandled_install_location = Windows.find_executable_path("Steam.exe")
+                unhandled_install_location = Windows.find_executable_path("steam.exe")
                 Options.steam_question(unhandled_install_location)
                 return
             else:
@@ -572,12 +554,7 @@ class Options:  # for the ini
             unhandled_install_location = install_location_input
             Options.steam_question(unhandled_install_location)
             return
-        for file in os.listdir(unhandled_install_location.rstrip(r"\Steam.exe")):
-            if file == "Steam.exe":
-                executable_check = True
-            else:
-                executable_check = False
-        if not executable_check:
+        if not Windows.contains_file_check(unhandled_install_location, "steam.exe"):
             logger.warning("Path does not contain Steam executable.")
             time.sleep(0.05)
             install_location_input = Script.input_log("R to retry, or input another custom path.")
@@ -596,16 +573,20 @@ class Options:  # for the ini
             Options.launch_on_launch = False
 
     @staticmethod
+    def install_type_init():
+        if Options.savegame_dir.endswith("3559"):
+            Options.install_type = "Steam"
+        else:
+            Options.install_type = "Ubisoft"
+
+    @staticmethod
     def initialize():
         config = configparser.ConfigParser()
         config.read(Windows.expand_backup_path("options.ini"))
         attributes = inspect.getmembers(Options, lambda a: not (inspect.isroutine(a)))
         for e in [a for a in attributes if not (a[0].startswith('__') and a[0].endswith('__'))]:
             setattr(Options, e[0], config["Options"][e[0]])
-        if Options.savegame_dir.endswith("3559"):
-            Options.install_type = "Steam"
-        else:
-            Options.install_type = "Ubisoft"
+        Options.install_type_init()
 
     @staticmethod
     def write_to_ini():
@@ -639,14 +620,13 @@ if __name__ == "__main__":  # init
     pause_exit_checks = multiprocessing.Value("i", False)
     if Options.launch_on_launch and not Windows.check_process("GRW.exe"):
         Script.launch_game(Options.install_type, Options.steam_install_location, pause_exit_checks, first_launch=True)
-    first_passthrough = True
     p1 = multiprocessing.Process(target=Routine.back_savegames_up, args=(
         Options.savegame_dir, Options.backup_interval, suspend_event, pause_exit_checks))
     p2 = multiprocessing.Process(target=Routine.delete_unneccesary_backups,
-                                 args=(suspend_event, pause_exit_checks))
+                                 args=(Options.max_folder_count, suspend_event, pause_exit_checks))
     p3 = multiprocessing.Process(target=Routine.handle_game_exits, args=(
         Options.index_to_restore, Options.savegame_dir, Options.steam_install_location, Options.install_type,
-        first_passthrough, suspend_event, exit_event,
+        suspend_event, exit_event,
         pause_exit_checks))
     p4 = multiprocessing.Process(target=Routine.keyboard_listener)
 

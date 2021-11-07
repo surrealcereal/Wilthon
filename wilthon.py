@@ -1,19 +1,19 @@
 import configparser
+import datetime
 import inspect
 import logging
 import multiprocessing
 import os
 import pathlib
-import threading
 import psutil
+import subprocess
+import sys
+import threading
 import time
 import winsound
-import sys
-import subprocess
-import datetime
 from ctypes import windll, create_unicode_buffer
-from shutil import copytree
 from pynput import keyboard
+from shutil import copytree
 
 # env names: TEMP, APPDATA, ProgramFiles(x86)
 BACKUP_DIR = os.path.expandvars(r"%APPDATA%\Wildlands Backup")
@@ -213,7 +213,7 @@ class GameInstallation:
 
 
 class Script:  # for meta stuff
-    version = "0.2.1"
+    version = "0.2.2"
 
     @staticmethod
     def logger_initialize(init_stream_handler=True, init_file_handler=True):
@@ -245,9 +245,7 @@ class Script:  # for meta stuff
         logger.info("Successfully created directory \"Wildlands Backup\".")
         logger.info("Successfully created directory \"Wildlands Backup\\Logs\".")
         GameInstallation.install_handler(called_recursively=False)
-        _, s, _ = os.walk(
-            os.path.join(os.path.expandvars("ProgramFiles(x86)"), r'Ubisoft\Ubisoft Game Launcher\savegames'))
-        for subdir in s:
+        for subdir in [x[0] for x in os.walk(os.path.expandvars(r"%ProgramFiles(x86)%\Ubisoft\Ubisoft Game Launcher\savegames"))]:
             if subdir.endswith("1771"):  # ubi install
                 GameInstallation.is_ubisoft = True
                 GameInstallation.steam_candidate_adress = subdir

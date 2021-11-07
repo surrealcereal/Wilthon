@@ -285,20 +285,39 @@ class Script:  # for meta stuff
         return input(f'{time.strftime("%Y-%m-%d %H:%M:%S")}{"".ljust(4)}[INPUT]{"".ljust(6)}{message} ')
 
     @staticmethod
-    def input_guard(message, expected_tuple=("y", "n"), wrong_notif="Please enter a valid input:"):
-        expected_display = list()
-        for e in expected_tuple:
-            expected_display.append(e)
-            expected_display.append("/")
-        expected_display.pop()
-        expected_display = "".join(expected_display)
-        wrong_notif += f' ({expected_display})'
-        guarded_input = Script.input_log(f"{message} ({expected_display})")
-        while guarded_input.lower() not in expected_tuple:
-            logger.warning(wrong_notif)
-            time.sleep(0.05)
-            guarded_input = Script.input_log(message)
-        return guarded_input.lower()
+    def input_guard(message, expected_tuple=("y", "n"), wrong_notif="Please enter a valid input:",
+                    wrong_notif_numeric="Please enter a valid number.", is_numeric=False):
+        def denier():
+            if is_numeric:
+                logger.warning(wrong_notif_numeric)
+                time.sleep(0.05)
+                return Script.input_log(message)
+            else:
+                logger.warning(wrong_notif)
+                time.sleep(0.05)
+                return Script.input_log(f"{message} ({expected_display})")
+
+        if not is_numeric:
+            expected_display = list()
+            for e in expected_tuple:
+                expected_display.append(e)
+                expected_display.append("/")
+            expected_display.pop()
+            expected_display = "".join(expected_display)
+            wrong_notif += f' ({expected_display})'
+            guarded_input = Script.input_log(f"{message} ({expected_display})")
+        else:
+            guarded_input = Script.input_log(f"{message}")
+        if not is_numeric:
+            while guarded_input.lower() not in expected_tuple:
+                guarded_input = denier()
+        else:
+            while not guarded_input.isnumeric():
+                guarded_input = denier()
+        if is_numeric:
+            return int(guarded_input)
+        else:
+            return guarded_input.lower()
 
     @staticmethod
     def launch_game(install_type, steam_install_location, pause_exit_checks, first_launch=False):
@@ -307,7 +326,7 @@ class Script:  # for meta stuff
         else:
             logger.info("Relaunching Wildlands...")
         if install_type == "Steam":
-            subprocess.call(r"steam.exe -applaunch 460930", cwd=steam_install_location, shell=True)
+            subprocess.call(r"steam.exe -applaunch 460930", cwd=pathlib.Path(steam_install_location).parent, shell=True)
         elif install_type == "Ubisoft":
             os.startfile(Options.install_location)
         while not Windows.check_process("GRW.exe"):
@@ -371,29 +390,20 @@ class Routine:
         Script.logger_initialize()
 
         def manual_restore(options_backup_interval, options_savegame_dir):
-            manual_restore_input = Script.input_log(
-                "Which folder should be restored? Enter a cardinal number, e.g. 3 for third newest.")
-            while not manual_restore_input.isnumeric():
-                logger.warning("Please enter a valid number.")
-                time.sleep(0.05)
-                manual_restore_input = Script.input_log(
-                    "Which folder should be restored? Enter a cardinal number, e.g. 3 for third newest.")
+            manual_restore_input = Script.input_guard(
+                "Which folder should be restored? Enter a cardinal number, e.g. 3 for third newest.", is_numeric=True)
             manual_restore_confirmation_input = Script.input_guard(
                 f"This equates to a roll back of {manual_restore_input * int(options_backup_interval) * 60} minutes, are you sure?")
             if manual_restore_confirmation_input.lower() == "y":
-                newest_file_list = sorted(Windows.listdir_fullpath(BACKUP_DIR), key=os.path.getctime)
-                copytree(Windows.expand_backup_path(f"{newest_file_list[-1 * int(manual_restore_input)]}"),
-                         options_savegame_dir, dirs_exist_ok=True)
-                logger.info("Successfully restored savegames.")
+                restore_savegames(-1 * manual_restore_input, options_savegame_dir)
                 return
             else:
                 manual_restore(options_backup_interval, options_savegame_dir)
                 return
 
-        def restore_savegames(options_index_to_restore, options_savegame_dir):
+        def restore_savegames(index_to_restore, options_savegame_dir):
             newest_file_list = sorted(Windows.listdir_fullpath(BACKUP_DIR), key=os.path.getctime)
-            copytree(Windows.expand_backup_path(f"{newest_file_list[-1 * int(options_index_to_restore)]}"),
-                     options_savegame_dir, dirs_exist_ok=True)
+            copytree(f"{newest_file_list[index_to_restore]}", options_savegame_dir, dirs_exist_ok=True)
             logger.info("Successfully restored savegames.")
 
         def exit_routine(exit_event):
@@ -417,13 +427,13 @@ class Routine:
                     "Do you want to keep the utility running and relaunch game? Enter r to restore but not relaunch, enter m for manual restore, w for manual restore without relaunch.",
                     ("y", "n", "r", "m", "w"))
                 if backup_options_input.lower() == "y":
-                    restore_savegames(options_index_to_restore, options_savegame_dir)
+                    restore_savegames(-1 * int(options_index_to_restore), options_savegame_dir)
                     Script.launch_game(options_install_type, options_steam_install_location, pause_exit_checks)
                     suspend_event.value = False
                 elif backup_options_input.lower() == "n":
                     exit_routine(exit_event)
                 elif backup_options_input.lower() == "r":
-                    restore_savegames(options_index_to_restore, options_savegame_dir)
+                    restore_savegames(-1 * int(options_index_to_restore), options_savegame_dir)
                     exit_routine(exit_event)
                 elif backup_options_input.lower() == "w":
                     manual_restore(options_index_to_restore, options_savegame_dir)
@@ -440,7 +450,10 @@ class Routine:
         def on_press(key):
             try:
                 if key.char == '"' and Windows.get_foreground_window_title() == "Ghost Recon® Wildlands":
-                    winsound.Beep(750, 250)
+                    def play_sound():
+                        winsound.PlaySound(str(pathlib.Path(__file__).parent) + r"\beep.wav", winsound.SND_ALIAS)
+                    t = threading.Thread(target=play_sound)
+                    t.start()
                     newest_folder = max(Script.backup_dir_without_natives(), key=os.path.getctime)
                     time_to_display = Windows.get_timedelta_dir(newest_folder)
                     logger.info(f"Wilthon is still running. Last backup was {time_to_display} ago.")
@@ -469,13 +482,8 @@ class Options:  # for the ini
 
     @staticmethod
     def index_question():
-        index_answer = Script.input_log(
-            "Which folder should be restored on auto-restore? Enter a cardinal number, e.g. 3 for third newest.")
-        while not index_answer.isnumeric():
-            logger.warning("Please enter a correct number.")
-            time.sleep(0.05)
-            index_answer = Script.input_log(
-                "Which folder should be restored on auto-restore? Enter a cardinal number, e.g. 3 for third newest.")
+        index_answer = Script.input_guard(
+            "Which folder should be restored on auto-restore? Enter a cardinal number, e.g. 3 for third newest.", is_numeric=True)
         minutes_conf_message = int(int(index_answer) * Options.backup_interval / 60)
         seconds_conf_message = int(int(index_answer) * Options.backup_interval)
         if int(int(index_answer) * Options.backup_interval / 60) > 0:
@@ -517,13 +525,8 @@ class Options:  # for the ini
 
     @staticmethod
     def max_folder_count_question():
-        max_folder_answer = Script.input_log(
-            "How many folders should be kept before deleting extras?")
-        while not max_folder_answer.isnumeric():
-            logger.warning("Please enter a correct number.")
-            time.sleep(0.05)
-            max_folder_answer = Script.input_log(
-                "How many folders should be kept before deleting extras?")
+        max_folder_answer = Script.input_guard(
+            "How many folders should be kept before deleting extras?", is_numeric=True)
         Options.max_folder_count = max_folder_answer
 
     @staticmethod
